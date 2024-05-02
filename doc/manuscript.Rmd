@@ -1,0 +1,276 @@
+---
+title: "Superior paper quality with R-Markdown: The OBVIOUS Study"
+bibliography: refs.bib
+csl: jama.csl
+always_allow_html: true
+output: 
+  officedown::rdocx_document:
+    reference_docx: style_manuscript_times_new_roman.docx
+    keep_md: true
+---
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE,
+                      warning = FALSE,
+                      dpi = 600, 
+                      fig.width = 11, 
+                      fig.height = 6)
+
+# load standard packages for RMD word docs
+library(officer)
+library(flextable)
+library(gtsummary)
+library(dplyr)
+library(purrr)
+
+# specify a rounding specification 
+library(table.glue)
+
+conflicted::conflict_prefer('as_flextable', winner = 'flextable')
+conflicted::conflict_prefer('filter', winner = 'dplyr')
+
+
+rspec <- round_spec() |>
+  round_using_magnitude(digits = c(2, 1, 0),
+                        breaks = c(1, 10, Inf))
+
+# save it to options:
+names(rspec) <- paste('table.glue', names(rspec), sep = '.')
+options(rspec)
+
+# default is double space 
+# single spacing for title page, abstract, captions
+single_par <- fp_par(line_spacing=1)
+
+
+```
+
+Your name here, your degree,^1^ 
+Second in Command, MS,^1^ 
+Minor Contributor, PhD,^2^ and 
+The Mastermind, PhD^1^ 
+
+^1^Your department, University, City, State. `r single_par`
+^2^Department of Win, Overtly Pompous University, Irvine, CA. `r single_par`
+
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+
+**Correspondence to:** \
+Your name, Degree \
+Your Department \
+Additional departmental details if needed \
+Your university \
+Address line 1 \
+Address line 2 \
+Address line 3 \
+your phone number \
+your email `r single_par`
+
+**Word Count:** Abstract: ; Manuscript: 
+
+```{r data-prep, include=FALSE}
+
+library(palmerpenguins)
+
+data <- penguins
+
+```
+
+\newpage
+
+# ABSTRACT
+
+\newpage
+
+# INTRODUCTION
+
+
+Here's how to cite one thing.[@r_language]
+
+Here's how to cite two or more things.[@ambrosius_design_2014; @sprint_research_group_randomized_2015]
+
+# METHODS
+
+# RESULTS
+
+```{r results-prep}
+
+n_penguins <- nrow(data)
+
+mean_bill_length <- mean(data$bill_length_mm, na.rm = TRUE)
+
+mean_mass <- mean(data$body_mass_g, na.rm = TRUE)
+sd_mass <- sd(data$body_mass_g, na.rm = TRUE)
+
+# make a short name for table.glue::table_value - this makes
+# the inline reporting of results less complicated to read.
+tv <- table.glue::table_value
+tg <- table.glue::table_glue
+
+```
+
+
+Here's how to put some results into the text: A total of `r n_penguins` were included in the current analysis. The mean bill length was `r tv(mean_bill_length)`. The mean (standard deviation) body mass was `r tg("{mean_mass} ({sd_mass})")`
+
+# DISCUSSION
+
+\newpage
+
+# REFERENCES
+
+<div id="refs"></div>
+
+\newpage
+
+# ACKNOWLEDGMENTS 
+
+# FINANCIAL DISCLOSURE 
+
+```{r tbl_footers}
+
+ckd_defn <- as_paragraph("Chronic Kidney Disease was defined by an estimated glomerular filtration rate <60 ml/min/1.73 m", as_sup(2L), " based on the 2021 CKD-EPI creatinine equation.")
+
+```
+
+
+```{r tbl_abbrvs}
+
+abbrvs <- list(
+  CI   = 'confidence interval',
+  FI   = 'frailty index',
+  SD   = 'standard deviation',
+  IQR  = 'interquartile range',
+  MoCA = 'Montreal cognitive assessment',
+  EHR  = 'electronic health records',
+  CVD  = 'cardiovascular disease'
+)
+
+abbrvs_paste <- function(strings){
+  
+  front <- 'Abbreviations'
+  
+  matter <- glue::glue_collapse(strings, sep = '; ', last = '; and ')
+  
+  paste(front, matter, sep = ': ')
+  
+}
+
+abbrvs_write <- function(abbr){
+  
+  sorted <- abbr[sort(names(abbr))]
+  
+  strings <- map2_chr(names(sorted), sorted, paste, sep = ' = ')
+  
+  as_paragraph(abbrvs_paste(strings))
+  
+}
+
+
+```
+
+**Table 1: Penguin characteristics**
+
+```{r}
+
+
+tbl_summary(data, by = 'island') %>% 
+ as_flex_table() %>% 
+ theme_box() %>% 
+ align(j = c(2,3,4), align = 'center')
+
+```
+
+
+\newpage
+
+**Table 2: A more customized table**
+
+```{r}
+
+data %>% 
+ group_by(species) %>% 
+ slice(1:3) %>% 
+ select(-body_mass_g, -sex, -year) %>% 
+ mutate(across(where(is.numeric), table_value)) %>% 
+ as_grouped_data(groups = 'species') %>% 
+ as_flextable(hide_grouplabel = TRUE) %>% 
+ set_header_labels(bill_length_mm = 'Bill length, mm',
+                   bill_depth_mm = 'Bill depth, mm',
+                   flipper_length_mm = 'Flipper length, mm') %>% 
+ add_header_row(values = c(" ", " Penguin things"),
+                colwidths = c(1, 3)) %>% 
+ bg(i = ~!is.na(species), bg = 'grey90') %>% 
+ width(width = 1.5) %>% 
+ width(j = 1, width = 2) %>% 
+ align(part = 'all', j = c(2,3,4), align = 'center') %>% 
+ footnote(i = 2, j = 2, 
+          part = 'header',
+          value = as_paragraph("Bill length doesn't correlate with what you think it does."),
+          ref_symbols = '1') %>% 
+ footnote(i = 1, j = 1, 
+          part = 'body',
+          value = as_paragraph('Adelies are the best and they know it'), 
+          ref_symbols = '2') %>% 
+ add_footer_lines(values = abbrvs_write(abbrvs[c('CI', 'EHR', 'SD')])) %>% 
+ add_footer_lines(values = "none of those abbreviations are in the table but they demonstrate how to include abbreviations using my helper functions")
+
+```
+
+
+<!-- new page not needed at the end of a block section -->
+
+```{r}
+
+margins_normal <- page_mar(bottom = 2.54 * 0.3937, 
+                           top    = 2.54 * 0.3937, 
+                           right  = 2.54 * 0.3937, 
+                           left   = 2.54 * 0.3937,
+                           gutter = 0)
+
+block_section(
+  prop_section(
+    page_size = page_size(orient = "portrait"),
+    type = "continuous",
+    page_margins = margins_normal
+  )
+)
+
+```
+
+To make a landscape section, use the block_section code here. Note that the section will be applied to all content prior to the block reaching up to the most recent block.
+
+```{r echo = TRUE}
+block_section(
+  prop_section(
+    page_size = page_size(orient = "landscape"),
+    page_margins = page_mar(bottom = 1/8, top = 1/8, 
+                            right = 1/4, left = 1/4),
+    type = "continuous"
+  )
+)
+```
+
+
+To switch back to regular portrait section, add another portrait block. Notice how the block below acts on all content above it up to the prior block.
+
+
+```{r echo = TRUE}
+block_section(
+  prop_section(
+    page_size = page_size(orient = "portrait"),
+    type = "continuous",
+    page_margins = margins_normal
+  )
+)
+```
+
