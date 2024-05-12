@@ -24,6 +24,8 @@ mesa_load <- function() {
       visit = 1L,
       time_diabetes = exdiabpyr,
       status_diabetes = incdiab,
+      time_death = deathpyr,
+      status_death = death2019,
       age_yrs = age1c,
       sex = factor(female, levels = c(0,1), labels = c("male", "female")),
       race_ethnicity = factor(race1c,
@@ -50,8 +52,6 @@ mesa_load <- function() {
 
   mesa_visit_two <-
     read_sas(file.path(fpath, "mesaex2_nodiab.sas7bdat")) %>%
-    filter() %>%
-    filter() %>%
     transmute(
       id = idno,
       prediabetes = glucos2c >= 100 &
@@ -61,6 +61,8 @@ mesa_load <- function() {
       visit = 2L,
       time_diabetes = exdiabpyr26,
       status_diabetes = incdiab26,
+      time_death = deathpyr26,
+      status_death = death2019,
       age_yrs = age2c,
       sex = factor(female, levels = c(0,1), labels = c("male", "female")),
       race_ethnicity = factor(race1c,
@@ -82,8 +84,6 @@ mesa_load <- function() {
   bind_rows(mesa_visit_one,
             mesa_visit_two) %>%
     drop_na(time_diabetes, status_diabetes) %>%
-    arrange(id, visit) %>%
-    group_by(id) %>%
-    slice(1) %>%
+    arrange(id, visit)
 
 }

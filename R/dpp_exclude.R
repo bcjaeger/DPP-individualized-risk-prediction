@@ -24,8 +24,7 @@ dpp_exclude <- function(dpp_formatted) {
  n_participants <- c(n_participants, nrow(e2))
 
  exclusions <- enframe(n_participants) %>%
-  mutate(dropped = abs(c(0, diff(value))),
-         name = c("Study participants",
+  mutate(name = c("Study participants",
                    "Pre-diabetic at baseline",
                    "Randomized to placebo, metformin, or lifestyle"))
 
