@@ -7,6 +7,14 @@
 #' @param mesa_excluded
 tabulate_characteristics <- function(dpp_excluded, mesa_excluded, labels) {
 
+  # deal with the extra rows in mesa.
+
+  # mesa_excluded$excluded <- mesa_excluded$excluded %>%
+  #   arrange(id, visit) %>%
+  #   group_by(id) %>%
+  #   slice(1) %>%
+  #   filter(!(id %in% mesa_excluded$included$id))
+
   map2(
     .x = dpp_excluded,
     .y = mesa_excluded,
@@ -15,6 +23,10 @@ tabulate_characteristics <- function(dpp_excluded, mesa_excluded, labels) {
   )
 
 }
+
+# dpp_data <- tar_read(dpp_excluded)$excluded
+# mesa_data <- tar_read(mesa_excluded)$excluded
+# labels <- tar_read(labels)
 
 tabulate_characteristics_worker <- function(dpp_data, mesa_data, labels){
 
@@ -58,7 +70,7 @@ tabulate_characteristics_worker <- function(dpp_data, mesa_data, labels){
   }
 
   out <- tbl_summary(data = tbl_data,
-                     label = .label,
+                     label = as.list(.label),
                      by = 'study',
                      missing = 'no',
                      statistic = list(age_yrs = "{mean} ({sd})",

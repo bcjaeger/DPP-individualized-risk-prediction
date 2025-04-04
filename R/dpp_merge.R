@@ -25,6 +25,10 @@ dpp_merge <- function(dpp_components, daysrand_max = 0) {
 
  # include forms data (don't worry about filtering to visit/daysrand)
 
+ # blood pressure
+
+ # dpp_bp <- dpp_components$form$s03
+
  # education
  dpp_edu <- dpp_components$form$s06 %>%
   transmute(

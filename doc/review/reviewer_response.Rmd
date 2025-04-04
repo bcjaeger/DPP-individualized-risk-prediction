@@ -1,0 +1,272 @@
+---
+title: "Individualized risk prediction for type 2 diabetes"
+bibliography: refs.bib
+csl: jama.csl
+always_allow_html: true
+output: 
+  officedown::rdocx_document:
+    reference_docx: style_manuscript_times_new_roman.docx
+    keep_md: true
+---
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE,
+                      warning = FALSE,
+                      dpi = 600, 
+                      fig.width = 8, 
+                      fig.height = 6,
+                      fig.path = "doc/fig/")
+
+
+# load standard packages for RMD word docs
+library(officer)
+library(flextable)
+library(gtsummary)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(survival)
+library(broom)
+
+# specify a rounding specification 
+library(table.glue)
+
+conflicted::conflict_prefer('as_flextable', winner = 'flextable')
+conflicted::conflict_prefer('filter', winner = 'dplyr')
+
+
+rspec <- round_spec() |>
+  round_using_magnitude(digits = c(2, 1, 0),
+                        breaks = c(1, 10, Inf))
+
+# save it to options:
+names(rspec) <- paste('table.glue', names(rspec), sep = '.')
+options(rspec)
+
+# default is double space 
+# single spacing for title page, abstract, captions
+single_par <- fp_par(line_spacing=1)
+
+withr::with_dir(
+  here::here(),
+  code = {
+    targets::tar_load(c(labels,
+                        reviewer_1_cstats,
+                        data_analysis,
+                        analysis))
+  }
+)
+
+margins_normal <- page_mar(bottom = 2.54 * 0.1,  #0.3937, 
+                           top    = 2.54 * 0.1,  #0.3937, 
+                           right  = 2.54 * 0.1,  #0.3937, 
+                           left   = 2.54 * 0.1, #0.3937,
+                           gutter = 0)
+
+page_long_above <- function(){
+  
+  block_section(
+    prop_section(
+      page_size = page_size(orient = "portrait"),
+      type = "continuous",
+      page_margins = margins_normal
+    )
+  )
+  
+}
+
+page_wide_above <- function(){
+  block_section(
+    prop_section(
+      page_size = page_size(orient = "landscape"),
+      page_margins = margins_normal,
+      type = "continuous"
+    )
+  )
+}
+
+```
+
+```{r tbl_abbrvs}
+
+abbrvs <- list(
+  CI   = 'confidence interval',
+  FI   = 'frailty index',
+  SD   = 'standard deviation',
+  IQR  = 'interquartile range',
+  CVD  = 'cardiovascular disease',
+  DPP  = "Diabetes Prevention Program",
+  MESA = "Multi-Ethnic Study of Atherosclerosis",
+  NRI  = "Net reclassification index",
+  IDI  = "Integrated discrimination index",
+  AUC  = "Area underneath the receiver-operator characteristic curve",
+  IPA  = "Index of prediction accuracy",
+  HOMA = "Homeostatic Model Assessment"
+)
+
+abbrvs_paste <- function(strings){
+  
+  front <- 'Abbreviations'
+  
+  matter <- glue::glue_collapse(strings, sep = '; ', last = '; and ')
+  
+  paste(front, matter, sep = ': ')
+  
+}
+
+abbrvs_write <- function(abbr){
+  
+  sorted <- abbr[sort(names(abbr))]
+  
+  strings <- map2_chr(names(sorted), sorted, paste, sep = ' = ')
+  
+  as_paragraph(abbrvs_paste(strings))
+  
+}
+
+fn_mesa_baseline <- as_paragraph("Baseline for Multi-Ethnic Study of Atherosclerosis participants was visit 1 or 2 dependent on pre-diabetes status")
+
+ft_tidy <- function(x){
+  theme_box(x) %>% 
+    align(align = 'center', part = 'all') %>%
+    align(j = 1, align = 'left', part = 'all')
+}
+
+
+```
+
+C-statistics (95% confidence interval) were `r reviewer_1_cstats$data_internal$glucose_fasting_mgdl` and 
+`r reviewer_1_cstats$data_internal$hba1c_percent` for FPG and Hba1c, respectively, for internal validation. In external validation, the respective C-statistics were `r reviewer_1_cstats$data_external$glucose_fasting_mgdl` and 
+`r reviewer_1_cstats$data_external$hba1c_percent`. Noting that the combination of FPG and Hba1c consistently obtained higher C-statistic and index of prediction accuracy compared to the individual variables, we replicated our main analysis with an additional model that was restricted to these two predictors (Table R1)
+
+
+
+`r page_long_above()`
+
+Table R1. Comparison of the individualized model with standard model.
+
+
+```{r}
+
+analysis$eval %>% 
+  drop_na(reviewer_1) %>% 
+  pivot_wider(names_from = evaluation, 
+              values_from = c(standard, reviewer_1, individualized)) %>% 
+  select(stat, 
+         subgroup,
+         reviewer_1_internal,
+         standard_internal,
+         individualized_internal,
+         reviewer_1_external,
+         standard_external,
+         individualized_external) %>% 
+  as_grouped_data('subgroup') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>%
+  set_header_labels(
+    stat = "Evaluation statistic",
+    standard_internal = "Standard",
+    reviewer_1_internal = "FPG + Hba1c",
+    individualized_internal = "Individualized",
+    standard_external = "Standard",
+    reviewer_1_external = "FPG + Hba1c",
+    individualized_external = "Individualized"
+  ) %>% 
+  add_header_row(values = c("Evaluation statistic", 
+                            "Internal Validation", 
+                            "External Validation"), 
+                 colwidths = c(1, 3, 3)) %>% 
+  ft_tidy() %>% 
+  width(width = 1.5) %>% 
+  merge_v(part = 'header', j = 1) %>% 
+  add_footer_lines(
+    values = abbrvs_write(abbr = abbrvs[c("AUC", "IPA")])
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 1,
+    part = 'header',
+    value = as_paragraph('Table values are scaled by a factor of 100 for ease of interpretation.'),
+    ref_symbols = '1'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 2,
+    part = 'header',
+    value = as_paragraph('Internal validation results are based on 10-fold cross-validation in the Diabetes Prevention Program data'),
+    ref_symbols = '2'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 5,
+    part = 'header',
+    value = as_paragraph('External validation results are based on application of models fitted to the Diabetes Prevention Program data to the Multi-Ethnic Study of Atherosclerosis data.'),
+    ref_symbols = '3'
+  ) 
+```
+
+`r page_wide_above()`
+
+
+```{r}
+
+data_dpp <- data_analysis %>%
+  filter(study == "DPP") %>% 
+  mutate(age_cat = cut(age_yrs, breaks = c(0, 55, 65, Inf)))
+
+fit_cph <- 
+  coxph(Surv(time_diabetes, status_diabetes) ~ sex + education +
+          chol_trig_mgdl + bmi + hba1c_percent + glucose_fasting_mgdl +
+          treatment*age_yrs, data = data_dpp)
+
+pvals_multivariable <- tidy(anova(fit_cph)) %>% 
+  select(term, p.value) %>% 
+  filter(str_detect(term, 'age_yrs')) %>% 
+  mutate(term = c("main", "tx_interaction"),
+         p.value = table_pvalue(p.value, drop_leading_zero = F)) %>% 
+  deframe()
+
+data_inc <- cmprsk::cuminc(ftime = data_dpp$time_diabetes,
+                           fstatus = data_dpp$status_diabetes,
+                           group = data_dpp$age_cat)
+
+pval_unadjust <- data_inc$Tests %>% 
+  as_tibble() %>% 
+  mutate(pv = table_pvalue(pv, drop_leading_zero = FALSE))
+
+data_gg <- data_inc
+data_gg$Tests <- NULL
+
+data_gg %<>%
+  as.list() %>%
+  map_dfr(~tibble(time = .x$time, est = .x$est), .id = 'age_group') %>%
+  filter(time < 3) %>% 
+  mutate(age_group = factor(age_group, 
+                            levels = c("(0,55] 1",
+                                       "(55,65] 1",
+                                       "(65,Inf] 1"),
+                            labels = c("< 55 years",
+                                       "55 to 65 years",
+                                       "> 65 years")))
+
+```
+
+We examined the cumulative incidence of diabetes by age groups (age < 55 years, age 55 to 65 years, and age > 65 years) in the DPP. We did not detect a difference in the cumulative incidence curves (Figure R1; p = `r pval_unadjust$pv`). We also did not detect an assocation between continuous age and incident diagnosis of diabetes in a Cox regression model with adjustment for sex, eduction, triglycerides, BMI, Hba1c, fasting plasma glucose, and randomized treatment (p = `r pvals_multivariable['main']`). 
+
+\newpage
+
+Figure R1: Cumulative incidence of diabetes diagnosis in the DPP by age group.
+
+```{r}
+
+ggplot(data_gg, aes(x=time, y=est, color = age_group)) +
+  geom_line(linewidth = 1) + 
+  theme_bw() + 
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "Time, years", 
+       y = "Cumulative incidence of diabetes, %",
+       color = "Age group")
+
+```
+
+`r page_long_above()`

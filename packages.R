@@ -26,6 +26,7 @@ library(table.glue)
 library(data.table)
 library(flextable)
 library(cmprsk)
+library(survIDINRI)
 
 
 # standardizes starting location for filepaths

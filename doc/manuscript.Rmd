@@ -1,5 +1,5 @@
 ---
-title: "Superior paper quality with R-Markdown: The OBVIOUS Study"
+title: "Individualized risk prediction for type 2 diabetes"
 bibliography: refs.bib
 csl: jama.csl
 always_allow_html: true
@@ -15,7 +15,8 @@ knitr::opts_chunk$set(echo = FALSE,
                       warning = FALSE,
                       dpi = 600, 
                       fig.width = 11, 
-                      fig.height = 6)
+                      fig.height = 6,
+                      fig.path = "fig/")
 
 # load standard packages for RMD word docs
 library(officer)
@@ -23,6 +24,7 @@ library(flextable)
 library(gtsummary)
 library(dplyr)
 library(purrr)
+library(tidyverse)
 
 # specify a rounding specification 
 library(table.glue)
@@ -50,7 +52,14 @@ withr::with_dir(
                         analysis,
                         tbl_exclusion,
                         tbl_characteristics,
-                        tbl_cuminc))
+                        tbl_reclass,
+                        tbl_cph,
+                        tbl_optim,
+                        tbl_cuminc,
+                        tbl_characteristics_optim,
+                        fig_dcurve,
+                        fig_calib_internal,
+                        fig_calib_external))
   }
 )
 
@@ -65,7 +74,12 @@ abbrvs <- list(
   IQR  = 'interquartile range',
   CVD  = 'cardiovascular disease',
   DPP  = "Diabetes Prevention Program",
-  MESA = "Multi-Ethnic Study of Atherosclerosis"
+  MESA = "Multi-Ethnic Study of Atherosclerosis",
+  NRI  = "Net reclassification index",
+  IDI  = "Integrated discrimination index",
+  AUC  = "Area underneath the receiver-operator characteristic curve",
+  IPA  = "Index of prediction accuracy",
+  HOMA = "Homeostatic Model Assessment"
 )
 
 abbrvs_paste <- function(strings){
@@ -99,6 +113,15 @@ ft_tidy <- function(x){
 
 ```
 
+
+New result: The number needed to treat to prevent 1 diabetes case within the next three years:\
+
+Using model recommendation: `r tbl_characteristics_optim$nnt$nnt[1]`\
+Using lifestyle for everyone: `r tbl_characteristics_optim$nnt$nnt[2]`\
+Using metformin for everyone: `r tbl_characteristics_optim$nnt$nnt[3]`\
+
+Discrimination was estimated by concordance (C-) statistic, which measures the probability of assigning higher risk to a case versus a non-case. Calibration was evaluated in terms of agreement between average observed risk and deciles of predicted risk. The index of prediction accuracy (IPA) combines discrimination and calibration in one summary value that ranges from 0 (poor) to 1 (perfect). Net benefit is based on the weighted difference in the true versus false positive rate of a prediction model at a given decision threshold, i.e., $$\text{net benefit} = \text{true positive rate} - (\text{false positive rate} * \text{exchange rate}),$$ where the exchange rate is the odds of the threshold probability used for clinical decision making. Net benefit can be interpreted as the number of true-positive cases identified per 100 patients screened. 
+
 \newpage
 
 Table 0: Participants included.
@@ -129,7 +152,10 @@ Table 1: Descriptive table of Diabetes Prevention Program and Multi-Ethnic Study
 
 tbl_characteristics$included %>% 
   as_flex_table() %>% 
-  ft_tidy()
+  ft_tidy() %>% 
+  add_footer_lines(
+    values = abbrvs_write(abbr = abbrvs[c("DPP", "MESA", "HOMA")])
+  )
 
 ```
 
@@ -141,7 +167,10 @@ Table 2: Descriptive table of Diabetes Prevention Program and Multi-Ethnic Study
 
 tbl_characteristics$excluded %>% 
   as_flex_table() %>% 
-  ft_tidy()
+  ft_tidy() %>% 
+  add_footer_lines(
+    values = abbrvs_write(abbr = abbrvs[c("DPP", "MESA", "HOMA")])
+  )
 
 ```
 
@@ -159,14 +188,16 @@ tbl_cuminc %>%
 
 \newpage
 
-Table 4. 
+Table 4A. Comparison of the individualized model with standard model.
 
 
 ```{r}
 
 analysis$eval %>% 
+  select(-reviewer_1) %>% 
   pivot_wider(names_from = evaluation, 
               values_from = c(standard, individualized)) %>% 
+  filter(is.na(subgroup) | subgroup == "Overall") %>% 
   select(stat, 
          standard_internal,
          individualized_internal,
@@ -176,6 +207,9 @@ analysis$eval %>%
   mutate(
     stat = recode(
       stat,
+      "NRI" = "NRI, Overall",
+      "NRI+" = "NRI, Positive",
+      "NRI-" = "NRI, Negative",
       demo_parity = "Demographic parity",
       equal_oppo = "Equal opportunity",
       equal_odds = "Equal odds"
@@ -203,11 +237,510 @@ analysis$eval %>%
   ft_tidy() %>% 
   width(width = 1.5) %>% 
   merge_v(part = 'header', j = 1) %>% 
-  bg(i = ~ !is.na(group), part = 'body', bg = 'grey80')
+  bg(i = ~ !is.na(group),
+     part = 'body',
+     bg = 'grey80') %>%
+  padding(i = ~ is.na(group) & !str_detect(stat, "NRI|IDI|AUC|IPA"), 
+          j = 1,
+          part = 'body', 
+          padding.left = 10) %>% 
+  add_footer_lines(
+    values = abbrvs_write(abbr = abbrvs[c("NRI", "AUC", "IPA")])
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 1,
+    part = 'header',
+    value = as_paragraph('Table values are scaled by a factor of 100 for ease of interpretation.'),
+    ref_symbols = '1'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 2,
+    part = 'header',
+    value = as_paragraph('Internal validation results are based on 10-fold cross-validation in the Diabetes Prevention Program data'),
+    ref_symbols = '2'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 4,
+    part = 'header',
+    value = as_paragraph('External validation results are based on application of models fitted to the Diabetes Prevention Program data to the Multi-Ethnic Study of Atherosclerosis data.'),
+    ref_symbols = '3'
+  )  %>% 
+  footnote(
+    i = 7, j = 1,
+    part = 'body',
+    ref_symbols = "4",
+    value = as_paragraph(
+      "Demographic parity is satisfied when a model's predictions have the same predicted positive rate across groups."
+    )
+  ) %>% 
+  footnote(
+    i = 8, j = 1,
+    part = 'body',
+    ref_symbols = "5",
+    value = as_paragraph(
+      "Equal opportunity is satisfied when a model's predictions have the same true positive and false negative rates across protected groups."
+    )
+  ) %>% 
+  footnote(
+    i = 9, j = 1,
+    part = 'body',
+    ref_symbols = "6",
+    value = as_paragraph(
+      "Equal odds is satisfied when a model's predictions have the same false positive, true positive, false negative, and true negative rates across protected groups."
+    )
+  )
+
+```
+
+\newpage
+
+Table 4B: Subgroup comparison of the individualized model with standard model.
+
+```{r}
+
+analysis$eval %>% 
+  pivot_wider(names_from = evaluation, 
+              values_from = c(standard, individualized)) %>% 
+  filter(!is.na(subgroup) & subgroup != "Overall") %>% 
+  select(stat, 
+         subgroup,
+         standard_internal,
+         individualized_internal,
+         standard_external,
+         individualized_external) %>% 
+  as_grouped_data(group = 'subgroup') %>% 
+  janitor::remove_empty('rows') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>%
+  set_header_labels(
+    stat = "Evaluation statistic",
+    standard_internal = "Standard",
+    individualized_internal = "Individualized",
+    standard_external = "Standard",
+    individualized_external = "Individualized"
+  ) %>% 
+  add_header_row(values = c("Evaluation statistic", 
+                            "Internal Validation", 
+                            "External Validation"), 
+                 colwidths = c(1, 2, 2)) %>% 
+  ft_tidy() %>% 
+  width(width = 1.5) %>% 
+  merge_v(part = 'header', j = 1) %>% 
+  bg(i = ~ !is.na(subgroup),
+     part = 'body',
+     bg = 'grey80') %>%
+  padding(i = ~ is.na(subgroup) & !str_detect(stat, "NRI|AUC|IPA"), 
+          j = 1,
+          part = 'body', 
+          padding.left = 10) %>% 
+  add_footer_lines(
+    values = abbrvs_write(abbr = abbrvs[c("AUC", "IPA")])
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 1,
+    part = 'header',
+    value = as_paragraph('Table values are scaled by a factor of 100 for ease of interpretation.'),
+    ref_symbols = '1'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 2,
+    part = 'header',
+    value = as_paragraph('Internal validation results are based on 10-fold cross-validation in the Diabetes Prevention Program data'),
+    ref_symbols = '2'
+  ) %>% 
+  footnote(
+    i = 1,
+    j = 4,
+    part = 'header',
+    value = as_paragraph('External validation results are based on application of models fitted to the Diabetes Prevention Program data to the Multi-Ethnic Study of Atherosclerosis data.'),
+    ref_symbols = '3'
+  )
+
+```
+
+\newpage
+
+Table 5A: Reclassification matrix comparing individualized versus standard risk classification among participants in the Diabetes Prevention Program (internal) and the Multi-Ethnic Study of Atherosclerosis (external)
+
+```{r}
+
+tbl_reclass$set %>% 
+  mutate(set = paste(str_to_title(set), "data")) %>% 
+  as_grouped_data(groups = 'set') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>% 
+  ft_tidy() %>% 
+  width(j = 1, width = 1.5) %>% 
+  width(j = c(2,3,4), width = 1.2) %>% 
+  bg(i = ~ !is.na(set), part = 'body', bg = 'grey80') %>% 
+  padding(i = ~ is.na(set), part = 'body', padding.left = 10, j=1) %>% 
+  set_header_labels(standard = "Standard risk categories") %>% 
+  add_header_row(values = c("Standard risk categories", 
+                            "Individualized risk categories"), 
+                 colwidths = c(1, 3)) %>% 
+  merge_v(part = 'header')
+
+```
+
+\newpage
+
+Table 5B: Reclassification matrix comparing individualized versus standard risk classification among men and women.
+
+```{r}
+
+tbl_reclass$sex %>% 
+  mutate(sex = recode(sex, 'male' = "Men", "female" = "Women")) %>% 
+  as_grouped_data(groups = 'sex') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>% 
+  ft_tidy() %>% 
+  width(j = 1, width = 1.5) %>% 
+  width(j = c(2,3,4), width = 1.2) %>% 
+  bg(i = ~ !is.na(sex), part = 'body', bg = 'grey80') %>% 
+  padding(i = ~ is.na(sex), part = 'body', padding.left = 10, j=1) %>% 
+  set_header_labels(standard = "Standard risk categories") %>% 
+  add_header_row(values = c("Standard risk categories", 
+                            "Individualized risk categories"), 
+                 colwidths = c(1, 3)) %>% 
+  merge_v(part = 'header')
+
+```
+
+\newpage
+
+Table 5C: Reclassification matrix comparing individualized versus standard risk classification among men and women.
+
+```{r}
+
+tbl_reclass$race %>% 
+  mutate(
+    race_ethnicity = recode(
+      race_ethnicity, 
+      "caucasian" = "Caucasian", 
+      "african_american" = "African American",
+      "hispanic" = "Hispanic",
+      "other" = "Other"
+    )
+  ) %>% 
+  as_grouped_data(groups = 'race_ethnicity') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>% 
+  ft_tidy() %>% 
+  width(j = 1, width = 1.5) %>% 
+  width(j = c(2,3,4), width = 1.2) %>% 
+  bg(i = ~ !is.na(race_ethnicity), part = 'body', bg = 'grey80') %>% 
+  padding(i = ~ is.na(race_ethnicity), part = 'body', padding.left = 10, j=1) %>% 
+  set_header_labels(standard = "Standard risk categories") %>% 
+  add_header_row(values = c("Standard risk categories", 
+                            "Individualized risk categories"), 
+                 colwidths = c(1, 3)) %>% 
+  merge_v(part = 'header')
 
 ```
 
 
+\newpage
+
+Table 6: Optimal preventive intervention and 3-year counterfactual risk for type 2 diabetes from an individualized risk prediction model in the Diabetes Prevention Program
+
+```{r}
+
+tbl_optim %>% 
+  mutate(tx_opt = str_to_title(tx_opt),
+         type = str_to_title(type),
+         type = factor(type, levels = c("Internal", "External"))) %>% 
+  arrange(type) %>% 
+  as_grouped_data(groups = 'type') %>% 
+  as_flextable(hide_grouplabel = TRUE) %>% 
+  ft_tidy() %>% 
+  width(j = 1, width = 1.5) %>% 
+  width(j = c(2,3,4,5), width = 1.2) %>% 
+  bg(i = ~ !is.na(type), part = 'body', bg = 'grey80') %>% 
+  padding(i = ~ is.na(type), part = 'body', padding.left = 10, j=1) %>% 
+  set_header_labels(tx_opt = "Optimal intervention",
+                    tbn = "N (%)",
+                    lifestyle = "Lifestyle",
+                    metformin = "Metformin",
+                    placebo = "Placebo") %>% 
+  add_header_row(
+    values = c("Optimal intervention",
+               "N (%)",
+               "Counterfactual 3-year T2D Predicted Risk, Mean (SD)"), 
+    colwidths = c(1, 1, 3)
+  ) %>% 
+  merge_v(part = 'header')
+
+```
+
+\newpage
+
+Table 7: Summary of and instructions for using the individualized prediction model for type 2 diabetes.
+
+```{r}
+
+tbl_grouped_data <- tbl_cph$tbl_data %>%
+  arrange(!is.na(variable)) %>%
+  as_grouped_data(groups = 'variable') %>%
+  remove_empty('rows')
+
+padding_index <- with(
+  tbl_grouped_data,
+  is.na(variable) & !is.na(level)
+)
+
+# nonsense fix; short on time
+padding_index[1:2] <- FALSE
+
+
+tbl_grouped_data %>%
+  as_flextable(hide_grouplabel = TRUE)  %>%
+  ft_tidy() %>% 
+  set_header_labels(
+    level = "Variable", tbl_value = "Hazard ratio (95% CI)"
+  ) %>%
+  align(align = 'center', part = 'all') %>%
+  align(j = 1, align = 'left', part = 'all') %>%
+  padding(i = padding_index,
+          j = 1,
+          padding.left = 15) %>%
+  width(j = 1, width = 2) %>%
+  width(j = c(2), width = 2) %>%
+  footnote(
+    i = 1,
+    j = 1,
+    part = 'header',
+    ref_symbols = '1',
+    value = as_paragraph(
+      "Predictor variables included in the table were selected",
+      " apriori based on clinical availability and known associations."
+    )
+  ) %>%
+  footnote(
+    i = 1,
+    j = 2,
+    part = 'header',
+    ref_symbols = '2',
+    value = as_paragraph(
+      paste(
+        "Hazard ratios are adjusted for all variables listed in the table.",
+        "Hazard ratios for continuous variables correspond to",
+        " a one standard deviation change in the variable."
+      )
+    )
+  ) %>% 
+  add_footer_lines(
+    value = as_paragraph(tbl_cph$instructions)
+  )
+
+block_section(
+  prop_section(
+    page_size = page_size(orient = "portrait"),
+    type = "continuous"
+  )
+)
+```
+
+\newpage
+
+Table 8: Characteristics of participants stratified by recommended treatment to prevent diabetes according to the individualized prediction model.
+
+```{r}
+tbl_characteristics_optim$tbl %>% 
+  ft_tidy() %>% 
+  align(align = 'center', part = 'all') %>%
+  align(j = 1, align = 'left', part = 'all') %>% 
+  add_header_row(values = c("Characteristic", 
+                            "Optimal predicted treatment"),
+                 colwidths = c(1, 2)) %>% 
+  merge_v(part = 'header')
+
+```
+
+\newpage
+
+Figure 1: Decision curve analysis of the individualized and standard model in internal and external validation.
+
+```{r fig-1}
+
+library(patchwork)
+
+p1 <- fig_dcurve$data_internal + labs(title="Internal validation")
+p2 <- fig_dcurve$data_external + labs(title="External validation")
+
+(guide_area() / (p1+p2)) + 
+  plot_layout(guides = "collect", 
+              heights = unit(c(1, 1), c("cm", "null"))) & 
+  theme(legend.position = "top")
+
+
+
+```
+
+\newpage
+
+Figure 2: Calibration of the individualized model in internal and external validation.
+
+```{r fig-2}
+
+p1 <- fig_calib_internal$overall + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$overall + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 3: Calibration of the individualized model in internal and external validation among male study participants
+
+```{r fig-3}
+
+p1 <- fig_calib_internal$men + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$men + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 4: Calibration of the individualized model in internal and external validation among female study participants
+
+```{r fig-4}
+
+p1 <- fig_calib_internal$women + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$women + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 5: Calibration of the individualized model in internal and external validation among African American study participants
+
+```{r fig-5}
+
+p1 <- fig_calib_internal$black + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$black + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 6A: Calibration of the individualized model in internal and external validation among Caucasian study participants
+
+```{r fig-6a}
+
+p1 <- fig_calib_internal$white + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$white + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 6B: Calibration of the individualized model in internal and external validation among Hispanic study participants
+
+```{r fig-6b}
+
+p1 <- fig_calib_internal$hispanic + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$hispanic + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+\newpage
+
+Figure 6C: Calibration of the individualized model in internal and external validation among study participants who identified their race/ethnicity as a category other than African American, Caucasian, or Hispanic.
+
+```{r fig-6c}
+
+p1 <- fig_calib_internal$other + 
+  labs(title="Internal validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+p2 <- fig_calib_external$other + 
+  labs(title="External validation",
+       x = "Predicted 3-year risk, %",
+       y = "Observed 3-year risk, %")
+
+(p1 + p2) + 
+  plot_layout(guides = "collect", 
+              axes = 'collect')
+
+```
+
+```{r}
+block_section(
+  prop_section(
+    page_size = page_size(orient = "landscape"),
+    page_margins = page_mar(bottom = 1/8, top = 1/8,
+                            right = 1/4, left = 1/4),
+    type = "continuous"
+  )
+)
+```
 
 
 

@@ -6,7 +6,7 @@
 #' @param data_analysis
 validate_preds <- function(data_analysis,
                            pred_horizon = 3,
-                           risk_cut = 0.125) {
+                           risk_cut = 0.2) {
 
   initial_split <- data_analysis %>%
     mutate(surv = Surv(time_diabetes, status_diabetes == 1)) %>%
@@ -31,9 +31,14 @@ validate_preds <- function(data_analysis,
   derivation_folds <- vfold_cv(derivation)
 
   rec_standard <- recipe(surv ~ ., data = derivation) %>%
-    step_impute_mean(all_numeric_predictors()) %>%
-    step_impute_mode(all_nominal_predictors()) %>%
-    update_role(race_ethnicity, new_role = 'id')
+    update_role(race_ethnicity, new_role = 'id') %>%
+    step_impute_knn(all_predictors())
+
+  rec_reviewer_1 <- derivation %>%
+    select(surv, glucose_fasting_mgdl, hba1c_percent, race_ethnicity) %>%
+    recipe(surv ~ ., data = .) %>%
+    update_role(race_ethnicity, new_role = 'id') %>%
+    step_impute_knn(all_predictors())
 
   rec_interaction <- rec_standard %>%
     step_interact(terms = ~treatment:matches("age_yrs|bmi|^glucose"))
@@ -46,12 +51,17 @@ validate_preds <- function(data_analysis,
     add_recipe(rec_standard) %>%
     add_model(cph_spec)
 
+  wf_reviewer_1 <- workflow() %>%
+    add_recipe(rec_reviewer_1) %>%
+    add_model(cph_spec)
+
   wf_individualized <- workflow() %>%
     add_recipe(rec_interaction) %>%
     add_model(cph_spec)
 
   wf <- list(
     standard = wf_standard,
+    reviewer_1 = wf_reviewer_1,
     individualized = wf_individualized
   )
 
@@ -76,10 +86,10 @@ validate_preds <- function(data_analysis,
       group_by(model) %>%
       mutate(.id = seq(n()))
 
-    test_out[[i]] <- tibble(time = test$surv[,1],
-                            status = test$surv[,2],
-                            sex = test$sex,
-                            race_ethnicity = test$race_ethnicity)
+    test_out[[i]] <- test %>%
+      mutate(time = surv[,1],
+             status = surv[,2]) %>%
+      select(-surv)
 
   }
 
@@ -100,7 +110,6 @@ validate_preds <- function(data_analysis,
   data_internal <-  preds_internal %>%
     map(as.numeric) %>%
     bind_cols(test_internal)
-
 
   conseq_internal <- list()
 
@@ -134,6 +143,7 @@ validate_preds <- function(data_analysis,
     bind_rows(.id = 'group') %>%
     pivot_longer(test_pos_rate:spec) %>%
     group_by(group, label, name) %>%
+    # mutate(parity = max(abs(value - max(value)))) %>%
     mutate(parity = min(value / max(value))) %>%
     select(-value, -level) %>%
     distinct() %>%
@@ -150,11 +160,18 @@ validate_preds <- function(data_analysis,
     mutate(across(.cols = c(individualized, standard),
                   .fns = ~ table_value(100 * .x)))
 
-  sc_internal <- Score(object = preds_internal,
-                       data = test_internal,
-                       formula = Surv(time, status) ~ 1,
-                       times = pred_horizon,
-                       summary = 'IPA')
+  data_internal_subgroups <- list(
+    "Overall" = data_internal,
+    "Women" = filter(data_internal, sex == "female"),
+    "Men" = filter(data_internal, sex == "male"),
+    "NH-Black Race" = filter(data_internal, race_ethnicity == "african_american"),
+    "NH-White Race" = filter(data_internal, race_ethnicity == "caucasian"),
+    "Hispanic Race" = filter(data_internal, race_ethnicity == "hispanic"),
+    "Other Race" = filter(data_internal, race_ethnicity == "other")
+  )
+
+  sc_internal_out <- data_internal_subgroups %>%
+    map_dfr(get_sc, pred_horizon = pred_horizon, .id = 'subgroup')
 
   nri_internal <- nricens(time = test_internal$time,
                           event = test_internal$status,
@@ -163,10 +180,23 @@ validate_preds <- function(data_analysis,
                           t0 = pred_horizon,
                           cut = risk_cut)
 
-  nri_internal_out <- tidy_nri(nri_internal)
+  nri_internal_out <- tidy_nri(nri_internal) %>%
+    mutate(subgroup = 'Overall')
 
-  sc_internal_out <- tidy_score(sc_internal) %>%
-    select(-pval)
+  idi_internal <- IDI.INF(indata = with(data_internal, Surv(time, status)),
+                          covs0 = preds_internal$standard,
+                          covs1 = preds_internal$individualized,
+                          t0 = 3)
+
+  nri_internal_out <- nri_internal_out %>%
+    add_row(
+      stat = "IDI",
+      individualized = table_estin(estimate = 100 * idi_internal$m1[1],
+                                   lower    = 100 * idi_internal$m1[2],
+                                   upper    = 100 * idi_internal$m1[3]),
+      standard = "0 (ref)",
+      subgroup = "Overall"
+    )
 
   internal_out <- bind_rows(nri_internal_out,
                             sc_internal_out,
@@ -208,6 +238,10 @@ validate_preds <- function(data_analysis,
       preds[[1]]$individualized +
       preds[[2]]$individualized +
       preds[[3]]$individualized,
+    reviewer_1 =
+      preds[[1]]$reviewer_1 +
+      preds[[2]]$reviewer_1 +
+      preds[[3]]$reviewer_1,
     standard =
       preds[[1]]$standard +
       preds[[2]]$standard +
@@ -219,10 +253,10 @@ validate_preds <- function(data_analysis,
   data_external <-  preds_external %>%
     map(as.numeric) %>%
     bind_cols(
-      transmute(validation,
-                time = surv[,1],
-                status = surv[,2],
-                race_ethnicity, sex)
+      mutate(validation,
+             time = surv[,1],
+             status = surv[,2]) %>%
+        select(-surv)
     )
 
 
@@ -257,6 +291,7 @@ validate_preds <- function(data_analysis,
     bind_rows(.id = 'group') %>%
     pivot_longer(test_pos_rate:spec) %>%
     group_by(group, label, name) %>%
+    # mutate(parity = max(abs(value - max(value)))) %>%
     mutate(parity = min(value / max(value))) %>%
     select(-value, -level) %>%
     distinct() %>%
@@ -273,32 +308,48 @@ validate_preds <- function(data_analysis,
     mutate(across(.cols = c(individualized, standard),
                   .fns = ~ table_value(100 * .x)))
 
+  data_external_subgroups <- list(
+    "Overall" = data_external,
+    "Women" = filter(data_external, sex == "female"),
+    "Men" = filter(data_external, sex == "male"),
+    "NH-Black Race" = filter(data_external, race_ethnicity == "african_american"),
+    "NH-White Race" = filter(data_external, race_ethnicity == "caucasian"),
+    "Hispanic Race" = filter(data_external, race_ethnicity == "hispanic"),
+    "Other Race" = filter(data_external, race_ethnicity == "other")
+  )
 
-  sc_external <- Score(object = preds_external,
-                       data = tibble(time = validation$surv[,1],
-                                     status = validation$surv[,2]),
-                       formula = Surv(time, status) ~ 1,
-                       times = pred_horizon,
-                       summary = 'IPA',
-                       plots = 'Calibration')
+  sc_external_out <- data_external_subgroups %>%
+    map_dfr(get_sc, pred_horizon = pred_horizon, .id = 'subgroup')
 
   nri_external <- nricens(time = validation$surv[,1],
                           event = validation$surv[,2],
                           p.std = as.vector(preds_external$standard),
                           p.new = as.vector(preds_external$individualized),
                           t0 = pred_horizon,
-                          cut = c(.10))
+                          cut = risk_cut)
 
-  nri_external_out <- tidy_nri(nri_external)
+  nri_external_out <- tidy_nri(nri_external) %>%
+    mutate(subgroup = "Overall")
 
-  sc_external_out <- tidy_score(sc_external) %>%
-    select(-pval)
+  idi_external <- IDI.INF(indata = with(data_external, Surv(time, status)),
+                          covs0 = preds_external$standard,
+                          covs1 = preds_external$individualized,
+                          t0 = 3)
+
+  nri_external_out <- nri_external_out %>%
+    add_row(
+      stat = "IDI",
+      individualized = table_estin(estimate = 100 * idi_external$m1[1],
+                                   lower    = 100 * idi_external$m1[2],
+                                   upper    = 100 * idi_external$m1[3]),
+      standard = "0 (ref)",
+      subgroup = "Overall"
+    )
 
   external_out <- bind_rows(nri_external_out,
                             sc_external_out,
                             fairness_external_out) %>%
     relocate(standard, .before = individualized)
-
 
   eval_out <- bind_rows(internal = internal_out,
                         external = external_out,
@@ -306,6 +357,8 @@ validate_preds <- function(data_analysis,
     relocate(standard, .before = individualized)
 
   list(eval = eval_out,
+       data_internal = data_internal,
+       data_external = data_external,
        fits = fits)
 
 }
@@ -358,8 +411,22 @@ prediction_validate_consequences <- function(predictions,
                     time = cal_time,
                     thresholds = risk_cut,
                     statistics = c("test_pos_rate",
+                                   # "fn_rate",
+                                   # "fp_rate",
                                    "sens",
                                    "spec"))
 
+
+}
+
+get_sc <- function(data, pred_horizon){
+
+  as.list(select(data, individualized, reviewer_1, standard)) %>%
+    Score(data = data,
+          formula = Surv(time, status) ~ 1,
+          times = pred_horizon,
+          summary = 'IPA') %>%
+    tidy_score() %>%
+    select(-pval)
 
 }

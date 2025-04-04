@@ -1,4 +1,10 @@
 
+# TODO: redo table 1 using predicted best tx as stratifier in dpp
+# TODO: re-read and clarify methods section
+# TODO: NNT to prevent 1 incident DM using ILI only, MF only, and
+#       using recommendation from model
+# TODO: add 1 sentence description of cstat calib and nri
+
 source("packages.R")
 source("conflicts.R")
 
@@ -10,7 +16,7 @@ library(future.callr)
 plan(callr)
 
 
-manuscript_version <- 1
+manuscript_version <- 7
 
 if(!dir.exists(glue("doc/manuscript-v{manuscript_version}"))){
   dir.create(glue("doc/manuscript-v{manuscript_version}"))
@@ -20,6 +26,7 @@ if(!dir.exists(glue("doc/manuscript-v{manuscript_version}"))){
 labels_tar <- tar_target(
   labels,
   list(
+
     variables = c(
       age_yrs = "Age",
       race_ethnicity = "Race/ethnicity",
@@ -33,7 +40,11 @@ labels_tar <- tar_target(
       chol_trig_mgdl = "Triglycerides",
       chol_ldlc_mgdl = "Low-density lipoprotein cholesterol",
       chol_hdl_mgdl = "High-density lipoprotein cholesterol",
-      bmi = "Body mass index"),
+      bmi = "Body mass index",
+      sbp = "Systolic blood pressure",
+      dbp = "Diastolic blood pressure"
+    ),
+
     units = c(
       age_yrs = "years",
       glucose_fasting_mgdl = "mg/dl",
@@ -41,19 +52,24 @@ labels_tar <- tar_target(
       chol_trig_mgdl = "mg/dl",
       bmi = "kg/m2",
       chol_ldlc_mgdl = "mg/dl",
-      chol_hdl_mgdl = "mg/dl"
+      chol_hdl_mgdl = "mg/dl",
+      sbp = "mm Hg",
+      dbp = "mm Hg"
     ),
+
     levels = list(
       sex = c(
         "male" = "Male",
         "female" = "Female"
       ),
+
       race_ethnicity = c(
         "caucasian" = "Non-Hispanic White",
         "african_american" = "Non-Hispanic Black",
         "hispanic" = "Hispanic",
         "other" = "Other/Chinese"
       ),
+
       education = c(
         "less than high school" = "< High School",
         "high school" = "High School Graduate",
@@ -62,8 +78,6 @@ labels_tar <- tar_target(
     )
   )
 )
-
-dpp_init_tar <- tar_target(dpp_init, load_dpp())
 
 # step 1: load all the components of DPP
 dpp_components_tar <- tar_target(
@@ -120,6 +134,61 @@ analysis_tar <- tar_target(
   validate_preds(data_analysis)
 )
 
+reviewer_1_cstats_tar <- tar_target(
+  reviewer_1_cstats,
+  command = {
+
+    data_list <- analysis[c("data_internal", "data_external")]
+
+    cstats <- map(
+      .x = data_list,
+      .f = ~ {
+
+        score_data <- select(.x, glucose_fasting_mgdl, hba1c_percent) %>%
+          drop_na() %>%
+          # mutate(across(everything(), impute_mean)) %>%
+          as.list()
+
+        rspec <- round_spec() %>%
+          round_using_decimal(2)
+
+        sc <- Score(score_data,
+                    data = drop_na(.x, glucose_fasting_mgdl, hba1c_percent),
+                    formula = Surv(time, status) ~ 1,
+                    times = 3,
+                    metrics = 'auc')
+
+        sc$AUC$score %>%
+          transmute(model,
+                    auc = table_glue("{100*AUC} ({100*lower}, {100*upper})", rspec = rspec)) %>%
+          pivot_wider(names_from = model, values_from = auc) %>%
+          mutate(pval = sc$AUC$contrasts$p[1])
+      }
+    )
+  }
+)
+
+tbl_reclass_tar <- tar_target(
+  tbl_reclass,
+  tabulate_reclassification(analysis)
+)
+
+tbl_optim_tar <- tar_target(
+  tbl_optim,
+  tabulate_optimal_tx(analysis)
+)
+
+tbl_characteristics_optim_tar <- tar_target(
+  tbl_characteristics_optim,
+  tabulate_characteristics_optim(data_analysis,
+                                 labels, analysis)
+)
+
+tbl_cph_tar <- tar_target(
+  tbl_cph,
+  tabulate_cph(analysis, labels)
+)
+
 fig_cuminc_tar <- tar_target(
   fig_cuminc,
   visualize_cuminc(data_analysis)
@@ -130,6 +199,17 @@ tbl_cuminc_tar <- tar_target(
   tabulate_cuminc(data_analysis)
 )
 
+fig_dcurve_tar <- tar_target(
+  fig_dcurve,
+  visualize_dcurve(analysis)
+)
+
+fig_calib_tar <- tar_map(
+  values = tibble(type = c("internal", "external")),
+  tar_target(fig_calib, visualize_calib(analysis,
+                                        pred_horizon = 3,
+                                        type = type))
+)
 
 manuscript_tar <- tar_render(
   manuscript,
@@ -150,11 +230,18 @@ targets <- list(
   mesa_excluded_tar,
   tbl_exclusion_tar,
   tbl_characteristics_tar,
+  tbl_characteristics_optim_tar,
+  tbl_cph_tar,
   data_analysis_tar,
   analysis_tar,
+  tbl_reclass_tar,
+  tbl_optim_tar,
   fig_cuminc_tar,
   tbl_cuminc_tar,
-  manuscript_tar
+  fig_dcurve_tar,
+  fig_calib_tar,
+  manuscript_tar,
+  reviewer_1_cstats_tar
 )
 
 tar_hook_before(

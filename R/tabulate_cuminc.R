@@ -7,6 +7,7 @@
 tabulate_cuminc <- function(data_analysis, pred_horizon = 3) {
 
   data_cr <- data_analysis %>%
+    drop_na(time_death, status_death) %>%
     mutate(
       status = if_else(
         time_death < time_diabetes & status_death == 1,

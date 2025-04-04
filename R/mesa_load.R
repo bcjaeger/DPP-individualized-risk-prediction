@@ -17,9 +17,10 @@ mesa_load <- function() {
   )
 
   mesa_visit_one <-
-    read_sas(file.path(fpath, "mesaex1_nodiabv20231128.sas7bdat")) %>%
+    read_sas(file.path(fpath, "mesaex1_diabv20240601.sas7bdat")) %>%
     transmute(
       id = idno,
+      diabetes = anydiabex1,
       prediabetes = prediabex1,
       visit = 1L,
       time_diabetes = exdiabpyr,
@@ -30,9 +31,9 @@ mesa_load <- function() {
       sex = factor(female, levels = c(0,1), labels = c("male", "female")),
       race_ethnicity = factor(race1c,
                               labels = c("caucasian",
+                                         "other",
                                          "african_american",
-                                         "hispanic",
-                                         "other")),
+                                         "hispanic")),
       education = factor(edugrp,
                          levels = c(0, 1, 2, 3),
                          labels = c("less than high school",
@@ -50,14 +51,14 @@ mesa_load <- function() {
       bmi = bmi1c
     )
 
+  # older version: mesaex2_nodiab.sas7bdat
+
   mesa_visit_two <-
-    read_sas(file.path(fpath, "mesaex2_nodiab.sas7bdat")) %>%
+    read_sas(file.path(fpath, "mesaex2_diabv20240601.sas7bdat")) %>%
     transmute(
       id = idno,
-      prediabetes = glucos2c >= 100 &
-        glucos2c <= 125 &
-        hba1c2 < 6.5    &
-        hba1c2 > 5.7,
+      diabetes = anydiabex2,
+      prediabetes = prediabex2,
       visit = 2L,
       time_diabetes = exdiabpyr26,
       status_diabetes = incdiab26,
@@ -83,7 +84,14 @@ mesa_load <- function() {
 
   bind_rows(mesa_visit_one,
             mesa_visit_two) %>%
-    drop_na(time_diabetes, status_diabetes) %>%
     arrange(id, visit)
 
 }
+
+# mb <- bind_rows(mesa_visit_one,
+#                 mesa_visit_two) %>%
+#   filter(prediabetes == TRUE) %>%
+#   drop_na(time_diabetes, status_diabetes)
+#
+# nrow(mb)
+
